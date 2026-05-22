@@ -1,6 +1,10 @@
 // api/tts.js
 // Vapi-compatible custom TTS endpoint that wraps Sesame CSM-1B (hosted on Replicate).
-// Vapi POSTs here with text; we return raw 16-bit PCM mono audio. Vapi handles sample rate conversion.
+// Vapi POSTs { message: { text, sampleRate } }. We must return raw PCM:
+//   - 16-bit signed integer, little-endian
+//   - mono
+//   - sample rate exactly matching message.sampleRate (Vapi: 8000/16000/22050/24000)
+// Any deviation = garbled audio.
 
 export const config = {
   api: {
@@ -49,18 +53,87 @@ async function generateSesameAudio(text, speakerId) {
   return Buffer.from(arrayBuffer);
 }
 
-// Sesame returns a WAV file. Vapi wants raw PCM bytes (no header).
-function stripWavHeader(wavBuffer) {
-  for (let i = 0; i < Math.min(wavBuffer.length - 8, 200); i++) {
-    if (
-      wavBuffer[i] === 0x64 && wavBuffer[i + 1] === 0x61 &&
-      wavBuffer[i + 2] === 0x74 && wavBuffer[i + 3] === 0x61
-    ) {
-      return wavBuffer.slice(i + 8); // skip "data" + size field
-    }
+// Parse a WAV buffer into { format, channels, sampleRate, bitsPerSample, data }.
+// format: 1 = PCM int, 3 = IEEE float.
+function parseWav(buf) {
+  if (buf.length < 44) throw new Error('WAV too small: ' + buf.length + ' bytes');
+  if (buf.toString('ascii', 0, 4) !== 'RIFF' || buf.toString('ascii', 8, 12) !== 'WAVE') {
+    throw new Error('Not a WAV file (header=' + buf.toString('ascii', 0, 4) + '/' + buf.toString('ascii', 8, 12) + ')');
   }
-  console.warn('[tts] WAV data marker not found, using 44-byte fallback');
-  return wavBuffer.slice(44);
+
+  let fmt = null;
+  let offset = 12;
+  while (offset + 8 <= buf.length) {
+    const chunkId = buf.toString('ascii', offset, offset + 4);
+    const chunkSize = buf.readUInt32LE(offset + 4);
+
+    if (chunkId === 'fmt ') {
+      fmt = {
+        format: buf.readUInt16LE(offset + 8),
+        channels: buf.readUInt16LE(offset + 10),
+        sampleRate: buf.readUInt32LE(offset + 12),
+        bitsPerSample: buf.readUInt16LE(offset + 22)
+      };
+    } else if (chunkId === 'data') {
+      if (!fmt) throw new Error('data chunk before fmt chunk');
+      return Object.assign({}, fmt, { data: buf.slice(offset + 8, offset + 8 + chunkSize) });
+    }
+    offset += 8 + chunkSize + (chunkSize % 2); // chunks are word-aligned
+  }
+  throw new Error('data chunk not found in WAV');
+}
+
+// Convert IEEE float32 PCM → int16 PCM (mono in, mono out).
+function float32ToInt16Mono(buf, channels) {
+  const frameSize = 4 * channels;
+  const frames = Math.floor(buf.length / frameSize);
+  const out = Buffer.alloc(frames * 2);
+  for (let i = 0; i < frames; i++) {
+    let sum = 0;
+    for (let c = 0; c < channels; c++) {
+      sum += buf.readFloatLE(i * frameSize + c * 4);
+    }
+    const avg = sum / channels;
+    const clamped = Math.max(-1, Math.min(1, avg));
+    out.writeInt16LE(Math.round(clamped * 32767), i * 2);
+  }
+  return out;
+}
+
+// Convert multi-channel int16 PCM → mono int16 PCM.
+function int16ToMono(buf, channels) {
+  if (channels === 1) return buf;
+  const frameSize = 2 * channels;
+  const frames = Math.floor(buf.length / frameSize);
+  const out = Buffer.alloc(frames * 2);
+  for (let i = 0; i < frames; i++) {
+    let sum = 0;
+    for (let c = 0; c < channels; c++) {
+      sum += buf.readInt16LE(i * frameSize + c * 2);
+    }
+    out.writeInt16LE(Math.round(sum / channels), i * 2);
+  }
+  return out;
+}
+
+// Linear-interpolation resampler for int16 mono PCM.
+function resampleInt16Mono(buf, srcRate, dstRate) {
+  if (srcRate === dstRate) return buf;
+  const srcSamples = buf.length / 2;
+  const ratio = srcRate / dstRate;
+  const dstSamples = Math.floor(srcSamples / ratio);
+  const out = Buffer.alloc(dstSamples * 2);
+  for (let i = 0; i < dstSamples; i++) {
+    const srcPos = i * ratio;
+    const i0 = Math.floor(srcPos);
+    const i1 = Math.min(i0 + 1, srcSamples - 1);
+    const frac = srcPos - i0;
+    const s0 = buf.readInt16LE(i0 * 2);
+    const s1 = buf.readInt16LE(i1 * 2);
+    const interp = Math.round(s0 + (s1 - s0) * frac);
+    out.writeInt16LE(Math.max(-32768, Math.min(32767, interp)), i * 2);
+  }
+  return out;
 }
 
 export default async function handler(req, res) {
@@ -69,21 +142,45 @@ export default async function handler(req, res) {
   try {
     const body = req.body || {};
     const text = body.message?.text || body.text || '';
-    const speakerId = Number(body.speaker ?? process.env.SESAME_SPEAKER ?? 0);
+    const targetSampleRate = Number(body.message?.sampleRate || body.sampleRate || 24000);
+    const speakerId = Number(body.message?.voice ?? body.voice ?? process.env.SESAME_SPEAKER ?? 0);
+
+    console.log('[tts] req:', JSON.stringify({ text: text.slice(0, 80), targetSampleRate, speakerId }));
 
     if (!text.trim()) {
-      return res.status(200).send(Buffer.alloc(3200)); // ~100ms silence
+      const silenceFrames = Math.floor(targetSampleRate * 0.1); // ~100ms
+      return res.status(200).send(Buffer.alloc(silenceFrames * 2));
     }
 
-    console.log('[tts] synthesizing: "' + text.slice(0, 80) + '" (speaker=' + speakerId + ')');
     const t0 = Date.now();
     const wavBuffer = await generateSesameAudio(text, speakerId);
-    const pcmBuffer = stripWavHeader(wavBuffer);
-    console.log('[tts] done in ' + (Date.now() - t0) + 'ms, ' + pcmBuffer.length + ' PCM bytes');
+    const wav = parseWav(wavBuffer);
+    console.log('[tts] sesame wav:', JSON.stringify({
+      format: wav.format,
+      channels: wav.channels,
+      sampleRate: wav.sampleRate,
+      bitsPerSample: wav.bitsPerSample,
+      dataBytes: wav.data.length
+    }));
+
+    // Convert to mono 16-bit PCM at Sesame's native rate.
+    let pcm;
+    if (wav.format === 3 && wav.bitsPerSample === 32) {
+      pcm = float32ToInt16Mono(wav.data, wav.channels);
+    } else if (wav.format === 1 && wav.bitsPerSample === 16) {
+      pcm = int16ToMono(wav.data, wav.channels);
+    } else {
+      throw new Error('Unsupported WAV format=' + wav.format + ' bps=' + wav.bitsPerSample);
+    }
+
+    // Resample to Vapi's requested rate.
+    pcm = resampleInt16Mono(pcm, wav.sampleRate, targetSampleRate);
+
+    console.log('[tts] done in ' + (Date.now() - t0) + 'ms, ' + pcm.length + ' PCM bytes @ ' + targetSampleRate + 'Hz');
 
     res.setHeader('Content-Type', 'application/octet-stream');
-    res.setHeader('Content-Length', pcmBuffer.length);
-    return res.status(200).send(pcmBuffer);
+    res.setHeader('Content-Length', pcm.length);
+    return res.status(200).send(pcm);
   } catch (e) {
     console.error('[tts] error:', e.message);
     return res.status(500).json({ error: e.message });
