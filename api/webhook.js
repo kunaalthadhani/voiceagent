@@ -6,7 +6,7 @@
 // Configure this URL in Vapi assistant config:
 //   Advanced → Server URL → https://<your-vercel-domain>/api/webhook
 
-import { kv } from '@vercel/kv';
+import { upsertCall, getCall } from '../lib/store.js';
 
 export const config = {
   api: { bodyParser: true }
@@ -33,9 +33,9 @@ export default async function handler(req, res) {
       return res.status(200).json({ ok: true });
     }
 
-    const existing = await kv.get('call:' + callId);
+    const existing = await getCall(callId);
     if (!existing) {
-      console.warn('[webhook] no KV record for call', callId, '- creating one');
+      console.warn('[webhook] no row for call', callId, '- creating one');
     }
 
     const transcript = event.transcript || event.artifact?.transcript || null;
@@ -47,7 +47,14 @@ export default async function handler(req, res) {
       ?? (event.startedAt && event.endedAt ? Math.round((new Date(event.endedAt) - new Date(event.startedAt)) / 1000) : null);
     const recordingUrl = event.recordingUrl || event.artifact?.recordingUrl || null;
 
-    const updated = Object.assign({}, existing || { id: callId, created_at: Date.now() }, {
+    await upsertCall({
+      id: callId,
+      // If no row existed, fill these from event so we still have a complete record
+      lead_name: existing?.lead_name || event.customer?.name || null,
+      phone: existing?.phone || event.customer?.number || null,
+      property: existing?.property || null,
+      brokerage: existing?.brokerage || null,
+      created_at: existing?.created_at || new Date().toISOString(),
       status: 'completed',
       ended_reason: endedReason,
       duration_seconds: durationSeconds,
@@ -55,14 +62,8 @@ export default async function handler(req, res) {
       summary,
       structured_data: structured,
       recording_url: recordingUrl,
-      completed_at: Date.now()
+      completed_at: new Date().toISOString()
     });
-
-    await kv.set('call:' + callId, updated);
-    if (!existing) {
-      // Ensure it shows up in the dashboard list even if intake didn't add it
-      await kv.zadd('calls:by_time', { score: updated.created_at, member: callId });
-    }
 
     console.log('[webhook] saved call', callId, 'duration=' + durationSeconds + 's ended=' + endedReason);
     return res.status(200).json({ ok: true });

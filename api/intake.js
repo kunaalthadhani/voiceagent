@@ -2,7 +2,7 @@
 // Receives lead form submission from public/index.html, then asks Vapi
 // to place an outbound call to that lead with their info as dynamic variables.
 
-import { kv } from '@vercel/kv';
+import { insertCall } from '../lib/store.js';
 
 export const config = {
   api: { bodyParser: true }
@@ -65,22 +65,16 @@ export default async function handler(req, res) {
     const callId = vapiJson.id;
     console.log('[intake] Vapi call created:', callId);
 
-    // Stash a placeholder record in KV — the webhook will enrich it after the call.
-    const record = {
+    // Stash a placeholder row in Supabase — the webhook will enrich it after the call.
+    await insertCall({
       id: callId,
       lead_name,
       phone,
       property,
       brokerage,
       status: 'dialing',
-      created_at: Date.now(),
-      transcript: null,
-      summary: null,
-      duration_seconds: null
-    };
-
-    await kv.set('call:' + callId, record);
-    await kv.zadd('calls:by_time', { score: record.created_at, member: callId });
+      created_at: new Date().toISOString()
+    });
 
     return res.status(200).json({ ok: true, callId });
   } catch (e) {
