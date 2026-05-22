@@ -9,9 +9,9 @@ export const config = {
   }
 };
 
-const SESAME_MODEL = 'sesame/csm-1b';
+const SESAME_MODEL = 'lucataco/csm-1b';
 
-async function generateSesameAudio(text, voice) {
+async function generateSesameAudio(text, speakerId) {
   const apiKey = process.env.REPLICATE_API_TOKEN;
   if (!apiKey) throw new Error('REPLICATE_API_TOKEN not set');
 
@@ -25,7 +25,7 @@ async function generateSesameAudio(text, voice) {
     body: JSON.stringify({
       input: {
         text: text,
-        speaker: voice || 'conversational_a',
+        speaker: speakerId,
         max_audio_length_ms: 30000
       }
     })
@@ -68,15 +68,15 @@ export default async function handler(req, res) {
   try {
     const body = req.body || {};
     const text = body.message?.text || body.text || '';
-    const voice = body.voice || process.env.SESAME_VOICE || 'conversational_a';
+    const speakerId = Number(body.speaker ?? process.env.SESAME_SPEAKER ?? 0);
 
     if (!text.trim()) {
       return res.status(200).send(Buffer.alloc(3200)); // ~100ms silence
     }
 
-    console.log('[tts] synthesizing: "' + text.slice(0, 80) + '" (voice=' + voice + ')');
+    console.log('[tts] synthesizing: "' + text.slice(0, 80) + '" (speaker=' + speakerId + ')');
     const t0 = Date.now();
-    const wavBuffer = await generateSesameAudio(text, voice);
+    const wavBuffer = await generateSesameAudio(text, speakerId);
     const pcmBuffer = stripWavHeader(wavBuffer);
     console.log('[tts] done in ' + (Date.now() - t0) + 'ms, ' + pcmBuffer.length + ' PCM bytes');
 
