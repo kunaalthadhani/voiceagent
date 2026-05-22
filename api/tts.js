@@ -9,13 +9,13 @@ export const config = {
   }
 };
 
-const SESAME_MODEL = 'lucataco/csm-1b';
+const SESAME_VERSION = '3e59b10a9894c54ae5f2fc0347e3a2f5c82f0574407e53a7d9f76ec7c502ad03';
 
 async function generateSesameAudio(text, speakerId) {
   const apiKey = process.env.REPLICATE_API_TOKEN;
   if (!apiKey) throw new Error('REPLICATE_API_TOKEN not set');
 
-  const response = await fetch('https://api.replicate.com/v1/models/' + SESAME_MODEL + '/predictions', {
+  const response = await fetch('https://api.replicate.com/v1/predictions', {
     method: 'POST',
     headers: {
       'Authorization': 'Bearer ' + apiKey,
@@ -23,6 +23,7 @@ async function generateSesameAudio(text, speakerId) {
       'Prefer': 'wait=60'
     },
     body: JSON.stringify({
+      version: SESAME_VERSION,
       input: {
         text: text,
         speaker: speakerId,
