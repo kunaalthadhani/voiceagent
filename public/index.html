@@ -1,0 +1,187 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Lead Intake — Anchor Properties Dubai</title>
+  <style>
+    :root {
+      --bg: #0b0d10;
+      --panel: #14171c;
+      --border: #232830;
+      --text: #e6e8eb;
+      --muted: #8a93a0;
+      --accent: #4f8cff;
+      --accent-hover: #3a78ec;
+      --error: #ff6b6b;
+      --success: #4ade80;
+    }
+    * { box-sizing: border-box; }
+    html, body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--text);
+      font: 15px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      min-height: 100vh;
+    }
+    .wrap {
+      max-width: 460px;
+      margin: 0 auto;
+      padding: 48px 24px;
+    }
+    .nav {
+      display: flex;
+      justify-content: flex-end;
+      margin-bottom: 32px;
+    }
+    .nav a {
+      color: var(--muted);
+      text-decoration: none;
+      font-size: 14px;
+    }
+    .nav a:hover { color: var(--text); }
+    h1 {
+      margin: 0 0 8px;
+      font-size: 24px;
+      font-weight: 600;
+    }
+    .sub {
+      color: var(--muted);
+      margin-bottom: 32px;
+      font-size: 14px;
+    }
+    .panel {
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 24px;
+    }
+    label {
+      display: block;
+      font-size: 13px;
+      color: var(--muted);
+      margin-bottom: 6px;
+      margin-top: 16px;
+    }
+    label:first-of-type { margin-top: 0; }
+    input, select, textarea {
+      width: 100%;
+      background: #0b0d10;
+      border: 1px solid var(--border);
+      color: var(--text);
+      padding: 10px 12px;
+      border-radius: 8px;
+      font-size: 14px;
+      outline: none;
+      transition: border-color 0.15s;
+    }
+    input:focus, select:focus, textarea:focus {
+      border-color: var(--accent);
+    }
+    button {
+      width: 100%;
+      margin-top: 24px;
+      background: var(--accent);
+      color: white;
+      border: none;
+      padding: 12px;
+      border-radius: 8px;
+      font-size: 15px;
+      font-weight: 500;
+      cursor: pointer;
+      transition: background 0.15s;
+    }
+    button:hover:not(:disabled) { background: var(--accent-hover); }
+    button:disabled { opacity: 0.5; cursor: not-allowed; }
+    .status {
+      margin-top: 16px;
+      padding: 12px;
+      border-radius: 8px;
+      font-size: 14px;
+      display: none;
+    }
+    .status.show { display: block; }
+    .status.error {
+      background: rgba(255,107,107,0.1);
+      border: 1px solid rgba(255,107,107,0.3);
+      color: var(--error);
+    }
+    .status.success {
+      background: rgba(74,222,128,0.1);
+      border: 1px solid rgba(74,222,128,0.3);
+      color: var(--success);
+    }
+    .hint {
+      font-size: 12px;
+      color: var(--muted);
+      margin-top: 4px;
+    }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="nav">
+      <a href="/dashboard.html">Dashboard →</a>
+    </div>
+    <h1>New Lead Intake</h1>
+    <p class="sub">Submit a lead. Layla will call them within 10 seconds.</p>
+
+    <div class="panel">
+      <form id="intake-form">
+        <label for="lead_name">Lead name</label>
+        <input id="lead_name" name="lead_name" required placeholder="Ahmed Al Mansoori" />
+
+        <label for="phone">Phone number</label>
+        <input id="phone" name="phone" required placeholder="+971501234567" />
+        <div class="hint">Include country code (e.g. +971 for UAE, +1 for US)</div>
+
+        <label for="property">Property of interest</label>
+        <input id="property" name="property" required placeholder="2BR apartment in Dubai Marina, listing DM-4421" />
+
+        <label for="brokerage">Brokerage name</label>
+        <input id="brokerage" name="brokerage" required value="Anchor Properties Dubai" />
+
+        <button type="submit" id="submit-btn">Trigger call</button>
+      </form>
+
+      <div id="status" class="status"></div>
+    </div>
+  </div>
+
+  <script>
+    const form = document.getElementById('intake-form');
+    const btn = document.getElementById('submit-btn');
+    const status = document.getElementById('status');
+
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      btn.disabled = true;
+      btn.textContent = 'Calling...';
+      status.className = 'status';
+
+      const data = Object.fromEntries(new FormData(form));
+
+      try {
+        const res = await fetch('/api/intake', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(data)
+        });
+        const json = await res.json();
+        if (!res.ok) throw new Error(json.error || 'Unknown error');
+
+        status.className = 'status show success';
+        status.textContent = 'Call placed. Layla is dialing ' + data.phone + '. Check the dashboard for the transcript when the call ends.';
+        form.reset();
+        document.getElementById('brokerage').value = 'Anchor Properties Dubai';
+      } catch (err) {
+        status.className = 'status show error';
+        status.textContent = 'Error: ' + err.message;
+      } finally {
+        btn.disabled = false;
+        btn.textContent = 'Trigger call';
+      }
+    });
+  </script>
+</body>
+</html>

@@ -1,0 +1,267 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Call Dashboard — Anchor Properties Dubai</title>
+  <style>
+    :root {
+      --bg: #0b0d10;
+      --panel: #14171c;
+      --border: #232830;
+      --text: #e6e8eb;
+      --muted: #8a93a0;
+      --accent: #4f8cff;
+      --good: #4ade80;
+      --warn: #facc15;
+      --bad: #ff6b6b;
+    }
+    * { box-sizing: border-box; }
+    html, body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--text);
+      font: 14px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      min-height: 100vh;
+    }
+    .wrap {
+      max-width: 1100px;
+      margin: 0 auto;
+      padding: 32px 24px;
+    }
+    .header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 24px;
+    }
+    h1 {
+      margin: 0;
+      font-size: 22px;
+      font-weight: 600;
+    }
+    .header a {
+      color: var(--muted);
+      text-decoration: none;
+      font-size: 14px;
+    }
+    .header a:hover { color: var(--text); }
+    .toolbar {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+      margin-bottom: 16px;
+    }
+    button {
+      background: var(--panel);
+      border: 1px solid var(--border);
+      color: var(--text);
+      padding: 8px 14px;
+      border-radius: 8px;
+      font-size: 13px;
+      cursor: pointer;
+    }
+    button:hover { border-color: var(--accent); }
+    .refresh-note {
+      color: var(--muted);
+      font-size: 12px;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      overflow: hidden;
+    }
+    th, td {
+      padding: 12px 16px;
+      text-align: left;
+      border-bottom: 1px solid var(--border);
+      font-size: 13px;
+      vertical-align: top;
+    }
+    th {
+      background: #0f1216;
+      font-weight: 500;
+      color: var(--muted);
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+    tr:last-child td { border-bottom: none; }
+    tr.row { cursor: pointer; }
+    tr.row:hover td { background: rgba(79,140,255,0.05); }
+    .pill {
+      display: inline-block;
+      padding: 2px 8px;
+      border-radius: 999px;
+      font-size: 11px;
+      font-weight: 500;
+      text-transform: uppercase;
+      letter-spacing: 0.3px;
+    }
+    .pill.dialing { background: rgba(250,204,21,0.15); color: var(--warn); }
+    .pill.completed { background: rgba(74,222,128,0.15); color: var(--good); }
+    .pill.failed { background: rgba(255,107,107,0.15); color: var(--bad); }
+    .empty {
+      text-align: center;
+      padding: 64px 24px;
+      color: var(--muted);
+    }
+    .detail-row td {
+      background: #0f1216;
+      padding: 16px 24px;
+    }
+    .detail-row .label {
+      color: var(--muted);
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      margin-bottom: 6px;
+      margin-top: 16px;
+    }
+    .detail-row .label:first-child { margin-top: 0; }
+    .detail-row .value {
+      font-family: 'SF Mono', Monaco, Consolas, monospace;
+      font-size: 13px;
+      white-space: pre-wrap;
+      word-break: break-word;
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 12px;
+      max-height: 280px;
+      overflow-y: auto;
+    }
+    .detail-row .value.summary {
+      font-family: inherit;
+    }
+    .hidden { display: none; }
+    .muted { color: var(--muted); }
+    code {
+      font-family: 'SF Mono', Monaco, Consolas, monospace;
+      font-size: 12px;
+      background: var(--bg);
+      padding: 2px 6px;
+      border-radius: 4px;
+    }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="header">
+      <h1>Call Dashboard</h1>
+      <a href="/">+ New Lead</a>
+    </div>
+
+    <div class="toolbar">
+      <button id="refresh">Refresh</button>
+      <span class="refresh-note">Auto-refreshes every 10s</span>
+    </div>
+
+    <div id="content"></div>
+  </div>
+
+  <script>
+    const content = document.getElementById('content');
+    const refreshBtn = document.getElementById('refresh');
+
+    function fmtTime(ts) {
+      if (!ts) return '—';
+      const d = new Date(ts);
+      const today = new Date();
+      const sameDay = d.toDateString() === today.toDateString();
+      return sameDay
+        ? d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+        : d.toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+    }
+
+    function fmtDuration(s) {
+      if (s == null) return '—';
+      const m = Math.floor(s / 60);
+      const sec = s % 60;
+      return m + 'm ' + String(sec).padStart(2, '0') + 's';
+    }
+
+    function renderTranscript(t) {
+      if (!t) return '—';
+      if (typeof t === 'string') return t;
+      if (Array.isArray(t)) {
+        return t.map((m) => (m.role || '?') + ': ' + (m.message || m.text || '')).join('\n\n');
+      }
+      return JSON.stringify(t, null, 2);
+    }
+
+    function render(calls) {
+      if (!calls.length) {
+        content.innerHTML = '<div class="empty">No calls yet. <a href="/" style="color: var(--accent);">Submit a lead</a> to trigger one.</div>';
+        return;
+      }
+
+      const rows = calls.map((c) => {
+        const statusClass = c.status === 'completed' ? 'completed' : (c.status === 'failed' ? 'failed' : 'dialing');
+        const detailId = 'detail-' + c.id;
+        return (
+          '<tr class="row" data-detail="' + detailId + '">' +
+            '<td><strong>' + (c.lead_name || '—') + '</strong><br><span class="muted">' + (c.phone || '') + '</span></td>' +
+            '<td>' + (c.property || '—') + '</td>' +
+            '<td>' + fmtTime(c.created_at) + '</td>' +
+            '<td>' + fmtDuration(c.duration_seconds) + '</td>' +
+            '<td><span class="pill ' + statusClass + '">' + (c.status || 'unknown') + '</span></td>' +
+          '</tr>' +
+          '<tr id="' + detailId + '" class="detail-row hidden"><td colspan="5">' +
+            (c.summary ? '<div class="label">Summary</div><div class="value summary">' + escapeHtml(c.summary) + '</div>' : '') +
+            (c.structured_data ? '<div class="label">Structured data</div><div class="value">' + escapeHtml(JSON.stringify(c.structured_data, null, 2)) + '</div>' : '') +
+            '<div class="label">Transcript</div><div class="value">' + escapeHtml(renderTranscript(c.transcript)) + '</div>' +
+            (c.ended_reason ? '<div class="label">Ended reason</div><div class="value summary">' + escapeHtml(c.ended_reason) + '</div>' : '') +
+            (c.recording_url ? '<div class="label">Recording</div><div class="value summary"><a href="' + c.recording_url + '" target="_blank" style="color: var(--accent);">Open recording</a></div>' : '') +
+            '<div class="label">Call ID</div><div class="value summary"><code>' + c.id + '</code></div>' +
+          '</td></tr>'
+        );
+      }).join('');
+
+      content.innerHTML =
+        '<table>' +
+          '<thead><tr>' +
+            '<th>Lead</th>' +
+            '<th>Property</th>' +
+            '<th>Time</th>' +
+            '<th>Duration</th>' +
+            '<th>Status</th>' +
+          '</tr></thead>' +
+          '<tbody>' + rows + '</tbody>' +
+        '</table>';
+
+      document.querySelectorAll('tr.row').forEach((row) => {
+        row.addEventListener('click', () => {
+          const target = document.getElementById(row.dataset.detail);
+          if (target) target.classList.toggle('hidden');
+        });
+      });
+    }
+
+    function escapeHtml(s) {
+      if (s == null) return '';
+      return String(s)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;');
+    }
+
+    async function load() {
+      try {
+        const res = await fetch('/api/calls');
+        const json = await res.json();
+        render(json.calls || []);
+      } catch (e) {
+        content.innerHTML = '<div class="empty">Error loading: ' + e.message + '</div>';
+      }
+    }
+
+    refreshBtn.addEventListener('click', load);
+    load();
+    setInterval(load, 10000);
+  </script>
+</body>
+</html>
